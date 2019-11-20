@@ -1682,6 +1682,17 @@ bool CoreChecks::ValidatePipelineUnlocked(const PIPELINE_STATE *pPipeline, uint3
                 }
             }
         }
+
+        auto provoking_vertex_state_ci = lvl_find_in_chain<VkPipelineRasterizationProvokingVertexStateCreateInfoEXT>(
+            pPipeline->graphicsPipelineCI.pRasterizationState->pNext);
+        if (provoking_vertex_state_ci &&
+            provoking_vertex_state_ci->provokingVertexMode == VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT &&
+            !enabled_features.provoking_vertex_features.provokingVertexLast) {
+            skip |= log_msg(
+                report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_DEVICE_EXT, HandleToUint64(device),
+                "UNASSIGNED-CoreValidation-VkGraphicsPipelineCreateInfo-pRasterizationState-provokingVertexMode",
+                "provokingVertexLast MUST be enabled when provokingVertexMode is VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT.");
+        }
     }
 
     if ((pPipeline->active_shaders & VK_SHADER_STAGE_VERTEX_BIT) && !pPipeline->graphicsPipelineCI.pVertexInputState) {
@@ -6146,8 +6157,54 @@ bool CoreChecks::PreCallValidateCmdBindPipeline(VkCommandBuffer commandBuffer, V
         if (pipelineBindPoint == VK_PIPELINE_BIND_POINT_GRAPHICS) {
             skip |= ValidateGraphicsPipelineBindPoint(cb_state, pipeline_state);
         }
-    }
+    } else if (pipelineBindPoint == VK_PIPELINE_BIND_POINT_GRAPHICS && cb_state->activeRenderPass &&
+               phys_dev_ext_props.provoking_vertex_props.provokingVertexModePerPipeline == VK_FALSE) {
+        const auto last_bound_it = cb_state->lastBound.find(pipelineBindPoint);
+        if (last_bound_it != cb_state->lastBound.cend() && last_bound_it->second.pipeline_state) {
+            auto last_bound_provoking_vertex_state_ci = lvl_find_in_chain<VkPipelineRasterizationProvokingVertexStateCreateInfoEXT>(
+                last_bound_it->second.pipeline_state->graphicsPipelineCI.pRasterizationState->pNext);
 
+            auto current_provoking_vertex_state_ci = lvl_find_in_chain<VkPipelineRasterizationProvokingVertexStateCreateInfoEXT>(
+                pipeline_state->graphicsPipelineCI.pRasterizationState->pNext);
+
+            if (last_bound_provoking_vertex_state_ci && !current_provoking_vertex_state_ci) {
+                skip |= log_msg(report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_PIPELINE_EXT,
+                                HandleToUint64(pipeline),
+                                "UNASSIGNED-CoreValidation-CmdBindPipeline-pRasterizationState-provokingVertexMode",
+                                "When provokingVertexModePerPipeline is disabled, every pipeine's provokingVertexMode MUST be the "
+                                "same within current %s. But %s's provokingVertexMode is %s, %s doesn't chain "
+                                "VkPipelineRasterizationProvokingVertexStateCreateInfoEXT.",
+                                report_data->FormatHandle(cb_state->activeRenderPass->renderPass).c_str(),
+                                report_data->FormatHandle(last_bound_it->second.pipeline_state->pipeline).c_str(),
+                                string_VkProvokingVertexModeEXT(last_bound_provoking_vertex_state_ci->provokingVertexMode),
+                                report_data->FormatHandle(pipeline).c_str());
+            } else if (!last_bound_provoking_vertex_state_ci && current_provoking_vertex_state_ci) {
+                skip |= log_msg(report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_PIPELINE_EXT,
+                                HandleToUint64(pipeline),
+                                "UNASSIGNED-CoreValidation-CmdBindPipeline-pRasterizationState-provokingVertexMode",
+                                "When provokingVertexModePerPipeline is disabled, every pipeine's provokingVertexMode MUST be the "
+                                "same within current %s. But %s's provokingVertexMode is %s, %s doesn't chain "
+                                "VkPipelineRasterizationProvokingVertexStateCreateInfoEXT.",
+                                report_data->FormatHandle(cb_state->activeRenderPass->renderPass).c_str(),
+                                report_data->FormatHandle(pipeline).c_str(),
+                                string_VkProvokingVertexModeEXT(current_provoking_vertex_state_ci->provokingVertexMode),
+                                report_data->FormatHandle(last_bound_it->second.pipeline_state->pipeline).c_str());
+            } else if (last_bound_provoking_vertex_state_ci && current_provoking_vertex_state_ci &&
+                       last_bound_provoking_vertex_state_ci->provokingVertexMode !=
+                           current_provoking_vertex_state_ci->provokingVertexMode) {
+                skip |= log_msg(report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_PIPELINE_EXT,
+                                HandleToUint64(pipeline),
+                                "UNASSIGNED-CoreValidation-CmdBindPipeline-pRasterizationState-provokingVertexMode",
+                                "When provokingVertexModePerPipeline is disabled, every pipeine's provokingVertexMode MUST be the "
+                                "same within current %s. But %s's provokingVertexMode is %s, %s's provokingVertexMode is %s.",
+                                report_data->FormatHandle(cb_state->activeRenderPass->renderPass).c_str(),
+                                report_data->FormatHandle(pipeline).c_str(),
+                                string_VkProvokingVertexModeEXT(current_provoking_vertex_state_ci->provokingVertexMode),
+                                report_data->FormatHandle(last_bound_it->second.pipeline_state->pipeline).c_str(),
+                                string_VkProvokingVertexModeEXT(last_bound_provoking_vertex_state_ci->provokingVertexMode));
+            }
+        }
+    }
     return skip;
 }
 
