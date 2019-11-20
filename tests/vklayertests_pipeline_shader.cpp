@@ -10194,3 +10194,95 @@ TEST_F(VkLayerTest, GraphicsPipelineInvalidFlags) {
     flags = VK_PIPELINE_CREATE_RAY_TRACING_SHADER_GROUP_HANDLE_CAPTURE_REPLAY_BIT_KHR;
     CreatePipelineHelper::OneshotTest(*this, set_info, kErrorBit, "VUID-VkGraphicsPipelineCreateInfo-flags-03577");
 }
+
+TEST_F(VkLayerTest, UsingProvokingVertexModeLastVertexExtWithoutEnabled) {
+    TEST_DESCRIPTION("Test using VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT but it doesn't enable provokingVertexLast.");
+
+    ASSERT_NO_FATAL_FAILURE(Init());
+    ASSERT_NO_FATAL_FAILURE(InitRenderTarget());
+
+    CreatePipelineHelper pipe(*this);
+    pipe.InitInfo();
+    auto provoking_vertex_state_ci = lvl_init_struct<VkPipelineRasterizationProvokingVertexStateCreateInfoEXT>();
+    provoking_vertex_state_ci.provokingVertexMode = VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT;
+    pipe.rs_state_ci_.pNext = &provoking_vertex_state_ci;
+    pipe.InitState();
+
+    m_errorMonitor->SetDesiredFailureMsg(
+        VK_DEBUG_REPORT_ERROR_BIT_EXT,
+        "UNASSIGNED-CoreValidation-VkGraphicsPipelineCreateInfo-pRasterizationState-provokingVertexMode");
+    pipe.CreateGraphicsPipeline();
+    m_errorMonitor->VerifyFound();
+}
+
+TEST_F(VkLayerTest, NotSupportProvokingVertexModePerPipeline) {
+    TEST_DESCRIPTION(
+        "Test using different VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT but it doesn't support provokingVertexModePerPipeline.");
+    SetTargetApiVersion(VK_API_VERSION_1_1);
+
+    bool inst_ext = InstanceExtensionSupported(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
+    if (inst_ext) {
+        m_instance_extension_names.push_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
+        ASSERT_NO_FATAL_FAILURE(InitFramework(myDbgFunc, m_errorMonitor));
+    } else {
+        printf("%s %s not supported, skipping tests\n", kSkipPrefix, VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
+        return;
+    }
+
+    auto provoking_vertex_properties = lvl_init_struct<VkPhysicalDeviceProvokingVertexPropertiesEXT>();
+    auto properties2 = lvl_init_struct<VkPhysicalDeviceProperties2>(&provoking_vertex_properties);
+    vk::GetPhysicalDeviceProperties2(gpu(), &properties2);
+
+    if (provoking_vertex_properties.provokingVertexModePerPipeline == VK_TRUE) {
+        printf("%s provokingVertexModePerPipeline supported, skipping tests\n", kSkipPrefix);
+        return;
+    }
+
+    auto provoking_vertex_features = lvl_init_struct<VkPhysicalDeviceProvokingVertexFeaturesEXT>();
+    provoking_vertex_features.provokingVertexLast = VK_TRUE;
+    auto features2 = lvl_init_struct<VkPhysicalDeviceFeatures2>(&provoking_vertex_features);
+
+    ASSERT_NO_FATAL_FAILURE(InitState(nullptr, &features2));
+    ASSERT_NO_FATAL_FAILURE(InitRenderTarget());
+
+    CreatePipelineHelper pipe1(*this);
+    pipe1.InitInfo();
+    auto provoking_vertex_state_ci = lvl_init_struct<VkPipelineRasterizationProvokingVertexStateCreateInfoEXT>();
+    provoking_vertex_state_ci.provokingVertexMode = VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT;
+    pipe1.rs_state_ci_.pNext = &provoking_vertex_state_ci;
+    pipe1.InitState();
+    pipe1.CreateGraphicsPipeline();
+
+    CreatePipelineHelper pipe2(*this);
+    pipe2.InitInfo();
+    provoking_vertex_state_ci.provokingVertexMode = VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT;
+    pipe2.rs_state_ci_.pNext = &provoking_vertex_state_ci;
+    pipe2.InitState();
+    pipe2.CreateGraphicsPipeline();
+
+    CreatePipelineHelper pipe3(*this);
+    pipe3.InitInfo();
+    pipe3.InitState();
+    pipe3.CreateGraphicsPipeline();
+
+    m_commandBuffer->begin();
+    m_commandBuffer->BeginRenderPass(m_renderPassBeginInfo);
+    vk::CmdBindPipeline(m_commandBuffer->handle(), VK_PIPELINE_BIND_POINT_GRAPHICS, pipe1.pipeline_);
+
+    m_errorMonitor->SetDesiredFailureMsg(VK_DEBUG_REPORT_ERROR_BIT_EXT,
+                                         "UNASSIGNED-CoreValidation-CmdBindPipeline-pRasterizationState-provokingVertexMode");
+    vk::CmdBindPipeline(m_commandBuffer->handle(), VK_PIPELINE_BIND_POINT_GRAPHICS, pipe2.pipeline_);
+    m_errorMonitor->VerifyFound();
+
+    m_commandBuffer->EndRenderPass();
+    m_commandBuffer->BeginRenderPass(m_renderPassBeginInfo);
+    vk::CmdBindPipeline(m_commandBuffer->handle(), VK_PIPELINE_BIND_POINT_GRAPHICS, pipe1.pipeline_);
+
+    m_errorMonitor->SetDesiredFailureMsg(VK_DEBUG_REPORT_ERROR_BIT_EXT,
+                                         "UNASSIGNED-CoreValidation-CmdBindPipeline-pRasterizationState-provokingVertexMode");
+    vk::CmdBindPipeline(m_commandBuffer->handle(), VK_PIPELINE_BIND_POINT_GRAPHICS, pipe3.pipeline_);
+    m_errorMonitor->VerifyFound();
+
+    m_commandBuffer->EndRenderPass();
+    m_commandBuffer->end();
+}
