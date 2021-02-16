@@ -1311,6 +1311,10 @@ struct CMD_BUFFER_STATE : public BASE_NODE {
     };
     std::unordered_map<VkDescriptorSet, std::vector<CmdDrawDispatchInfo>> validate_descriptorsets_in_queuesubmit;
 
+    // For VK_NV_inherited_viewport_scissor, if VkCommandBufferInheritanceViewportScissorInfoNV::viewportScissor2D is true,
+    // this is the list of viewports passed in pViewportDepths. Otherwise (or if said extension is not enabled), this is empty.
+    std::vector<VkViewport> inheritedViewportDepths;
+
     uint32_t viewportMask;
     uint32_t viewportWithCountMask;
     uint32_t viewportWithCountCount;

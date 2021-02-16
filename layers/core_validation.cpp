@@ -840,10 +840,11 @@ bool CoreChecks::ValidatePipelineDrawtimeState(const LAST_BOUND_STATE &state, co
     }
 
     // If Viewport or scissors are dynamic, verify that dynamic count matches PSO count.
-    // Skip check if rasterization is disabled or there is no viewport.
+    // Skip check if rasterization is disabled, if there is no viewport, or if viewport/scisors are being inherited.
     if ((!pPipeline->graphicsPipelineCI.pRasterizationState ||
          (pPipeline->graphicsPipelineCI.pRasterizationState->rasterizerDiscardEnable == VK_FALSE)) &&
-        pPipeline->graphicsPipelineCI.pViewportState) {
+        pPipeline->graphicsPipelineCI.pViewportState &&
+        pCB->inheritedViewportDepths.size() == 0) {
         bool dyn_viewport = IsDynamic(pPipeline, VK_DYNAMIC_STATE_VIEWPORT);
         bool dyn_scissor = IsDynamic(pPipeline, VK_DYNAMIC_STATE_SCISSOR);
 

@@ -1446,6 +1446,7 @@ void ValidationStateTracker::ResetCommandBufferState(const VkCommandBuffer cb) {
         cb_state->image_layout_change_count = 1;  // Start at 1. 0 is insert value for validation cache versions, s.t. new == dirty
         cb_state->status = 0;
         cb_state->static_status = 0;
+        cb_state->inheritedViewportDepths.clear();
         cb_state->viewportMask = 0;
         cb_state->viewportWithCountMask = 0;
         cb_state->viewportWithCountCount = 0;
@@ -3670,6 +3671,15 @@ void ValidationStateTracker::PreCallRecordBeginCommandBuffer(VkCommandBuffer com
                     // Connect this framebuffer and its children to this cmdBuffer
                     AddFramebufferBinding(cb_state, cb_state->activeFramebuffer.get());
                 }
+            }
+
+            // Check for VkCommandBufferInheritanceViewportScissorInfoNV (VK_NV_inherited_viewport_scissor)
+            auto p_inherited_viewport_scissor_info =
+                LvlFindInChain<VkCommandBufferInheritanceViewportScissorInfoNV>(cb_state->beginInfo.pInheritanceInfo->pNext);
+            if (p_inherited_viewport_scissor_info != nullptr && p_inherited_viewport_scissor_info->viewportScissor2D) {
+                auto pViewportDepths = p_inherited_viewport_scissor_info->pViewportDepths;
+                cb_state->inheritedViewportDepths.assign(
+                    pViewportDepths, pViewportDepths + p_inherited_viewport_scissor_info->viewportDepthCount);
             }
         }
     }
