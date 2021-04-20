@@ -25,6 +25,8 @@
 #include "stateless_validation.h"
 #include "layer_chassis_dispatch.h"
 
+#include "VK_NV_inherited_viewport_scissor.h"
+
 static const int kMaxParamCheckerStringLength = 256;
 
 template <typename T>
@@ -3586,7 +3588,8 @@ bool StatelessValidation::manual_PreCallValidateBeginCommandBuffer(VkCommandBuff
 
         if (info) {
             const VkStructureType allowed_structs_vk_command_buffer_inheritance_info[] = {
-                VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_CONDITIONAL_RENDERING_INFO_EXT};
+                VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_CONDITIONAL_RENDERING_INFO_EXT,
+                VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_VIEWPORT_SCISSOR_INFO_NV};
             skip |= validate_struct_pnext(
                 cmd_name, "pBeginInfo->pInheritanceInfo->pNext", "VkCommandBufferInheritanceConditionalRenderingInfoEXT",
                 info->pNext, ARRAY_SIZE(allowed_structs_vk_command_buffer_inheritance_info),
