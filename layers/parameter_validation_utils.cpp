@@ -25,8 +25,6 @@
 #include "stateless_validation.h"
 #include "layer_chassis_dispatch.h"
 
-#include "VK_NV_inherited_viewport_scissor.h"
-
 static const int kMaxParamCheckerStringLength = 256;
 
 template <typename T>

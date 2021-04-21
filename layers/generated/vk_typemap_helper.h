@@ -32,28 +32,12 @@
 #pragma once
 #include <vulkan/vulkan.h>
 
-#include "../VK_NV_inherited_viewport_scissor.h" // akeley98 TODO remove this
-
 // These empty generic templates are specialized for each type with sType
 // members and for each sType -- providing a two way map between structure
 // types and sTypes
 
 template <VkStructureType id> struct LvlSTypeMap {};
 template <typename T> struct LvlTypeMap {};
-
-// akeley98 TODO can't figure out how the generator works.
-template <> struct LvlTypeMap<VkPhysicalDeviceInheritedViewportScissorFeaturesNV> {
-    static const VkStructureType kSType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INHERITED_VIEWPORT_SCISSOR_FEATURES_NV;
-};
-template <> struct LvlSTypeMap<VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INHERITED_VIEWPORT_SCISSOR_FEATURES_NV> {
-    typedef VkPhysicalDeviceInheritedViewportScissorFeaturesNV Type;
-};
-template <> struct LvlTypeMap<VkCommandBufferInheritanceViewportScissorInfoNV> {
-    static const VkStructureType kSType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_VIEWPORT_SCISSOR_INFO_NV;
-};
-template <> struct LvlSTypeMap<VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_VIEWPORT_SCISSOR_INFO_NV> {
-    typedef VkCommandBufferInheritanceViewportScissorInfoNV Type;
-};
 
 // Map type VkBufferMemoryBarrier to id VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER
 template <> struct LvlTypeMap<VkBufferMemoryBarrier> {

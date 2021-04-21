@@ -910,9 +910,9 @@ bool CoreChecks::ValidatePipelineDrawtimeState(const LAST_BOUND_STATE &state, co
         uint32_t viewport_count = pPipeline->graphicsPipelineCI.pViewportState->viewportCount;
         uint32_t max_inherited  = uint32_t(pCB->inheritedViewportDepths.size());
         if (viewport_count > max_inherited) {
-            skip |= LogError(device, "VUID-TODO",
+            skip |= LogError(device, vuid.dynamic_state,
                 "Pipeline requires more viewports (%u) than inherited (viewportDepthCount=%u).",
-                unsigned(viewport_count), unsigned(max_inherited)); // TODO akeley98
+                unsigned(viewport_count), unsigned(max_inherited));
         }
     }
 
@@ -5957,13 +5957,13 @@ bool CoreChecks::PreCallValidateBeginCommandBuffer(VkCommandBuffer commandBuffer
                     LvlFindInChain<VkCommandBufferInheritanceViewportScissorInfoNV>(info->pNext);
             if (p_inherited_viewport_scissor_info != nullptr && p_inherited_viewport_scissor_info->viewportScissor2D) {
                 if (!(pBeginInfo->flags & VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT)) {
-                    skip |= LogError(commandBuffer, "VUID-TODO",
+                    skip |= LogError(commandBuffer, "VUID-VkCommandBufferInheritanceViewportScissorInfoNV-viewportScissor2D-04786",
                                      "vkBeginCommandBuffer(): Secondary %s must be recorded with the"
                                      "VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT if viewportScissor2D is VK_TRUE.",
                                      report_data->FormatHandle(commandBuffer).c_str());
                 }
                 if (p_inherited_viewport_scissor_info->viewportDepthCount == 0) {
-                    skip |= LogError(commandBuffer, "VUID-TODO",
+                    skip |= LogError(commandBuffer, "VUID-VkCommandBufferInheritanceViewportScissorInfoNV-viewportScissor2D-04784",
                                      "vkBeginCommandBuffer(): "
                                      "If viewportScissor2D is VK_TRUE, then viewportDepthCount must be greater than 0.",
                                      report_data->FormatHandle(commandBuffer).c_str());
@@ -6101,8 +6101,8 @@ bool CoreChecks::ValidateGraphicsPipelineBindPoint(const CMD_BUFFER_STATE *cb_st
         bool dyn_scissor = IsDynamic(pipeline_state, VK_DYNAMIC_STATE_SCISSOR_WITH_COUNT_EXT)
                          || IsDynamic(pipeline_state, VK_DYNAMIC_STATE_SCISSOR);
         if (!dyn_viewport || !dyn_scissor) {
-            // akeley98 TODO
-            skip |= LogError(device, "VUID-TODO", "If commandBuffer is a secondary command buffer with VkCommandBufferInheritanceViewportScissorInfoNV::viewportScissor2D enabled and pipelineBindPoint is VK_PIPELINE_BIND_POINT_GRAPHICS, then the pipeline must have been created with VK_DYNAMIC_STATE_VIEWPORT_WITH_COUNT_EXT or VK_DYNAMIC_STATE_VIEWPORT, and VK_DYNAMIC_STATE_SCISSOR_WITH_COUNT_EXT or VK_DYNAMIC_STATE_SCISSOR enabled.");
+            skip |= LogError(device, "VUID-vkCmdBindPipeline-commandBuffer-04808",
+                "Graphics pipeline incompatible with viewport/scissor inheritance");
         }
     }
 
@@ -6153,11 +6153,12 @@ bool CoreChecks::PreCallValidateCmdBindPipeline(VkCommandBuffer commandBuffer, V
 }
 
 bool CoreChecks::ForbidInheritedViewportScissor(VkCommandBuffer commandBuffer, const CMD_BUFFER_STATE *cb_state,
-                                                const char *cmdName) const {
+                                                const char* vuid, const char *cmdName) const {
     bool skip = false;
     if (cb_state->inheritedViewportDepths.size() != 0) {
-        // akeley98 TODO
-        skip |= LogError(commandBuffer, "VUID-TODO", "%s: commandBuffer must not have VkCommandBufferInheritanceViewportScissorInfoNV::viewportScissor2D enabled.", cmdName);
+        skip |= LogError(
+            commandBuffer, vuid,
+            "%s: commandBuffer must not have VkCommandBufferInheritanceViewportScissorInfoNV::viewportScissor2D enabled.", cmdName);
     }
     return skip;
 }
@@ -6169,7 +6170,8 @@ bool CoreChecks::PreCallValidateCmdSetViewport(VkCommandBuffer commandBuffer, ui
     bool skip =
         ValidateCmdQueueFlags(cb_state, "vkCmdSetViewport()", VK_QUEUE_GRAPHICS_BIT, "VUID-vkCmdSetViewport-commandBuffer-cmdpool");
     skip |= ValidateCmd(cb_state, CMD_SETVIEWPORT, "vkCmdSetViewport()");
-    skip |= ForbidInheritedViewportScissor(commandBuffer, cb_state, "vkCmdSetViewport");
+    skip |=
+        ForbidInheritedViewportScissor(commandBuffer, cb_state, "VUID-vkCmdSetViewport-commandBuffer-04821", "vkCmdSetViewport");
     return skip;
 }
 
@@ -6180,7 +6182,8 @@ bool CoreChecks::PreCallValidateCmdSetScissor(VkCommandBuffer commandBuffer, uin
     bool skip =
         ValidateCmdQueueFlags(cb_state, "vkCmdSetScissor()", VK_QUEUE_GRAPHICS_BIT, "VUID-vkCmdSetScissor-commandBuffer-cmdpool");
     skip |= ValidateCmd(cb_state, CMD_SETSCISSOR, "vkCmdSetScissor()");
-    skip |= ForbidInheritedViewportScissor(commandBuffer, cb_state, "vkCmdSetScissor");
+    skip |=
+        ForbidInheritedViewportScissor(commandBuffer, cb_state, "VUID-vkCmdSetScissor-viewportScissor2D-04789", "vkCmdSetScissor");
     return skip;
 }
 
@@ -6195,7 +6198,6 @@ bool CoreChecks::PreCallValidateCmdSetExclusiveScissorNV(VkCommandBuffer command
         skip |= LogError(commandBuffer, "VUID-vkCmdSetExclusiveScissorNV-None-02031",
                          "vkCmdSetExclusiveScissorNV: The exclusiveScissor feature is disabled.");
     }
-    skip |= ForbidInheritedViewportScissor(commandBuffer, cb_state, "vkCmdSetExclusiveScissorNV");
     return skip;
 }
 
@@ -11592,7 +11594,6 @@ bool CoreChecks::PreCallValidateCmdExecuteCommands(VkCommandBuffer commandBuffer
         }
 
         // Common code for reporting missing inherited state (for a myriad of reasons).
-        // akeley98 TODO match convention for error messages.
         auto check_missing_inherit = [&] (uint32_t was_ever_defined, uint32_t trashed_by,
                                           VkDynamicState state, uint32_t index = 0, uint32_t static_use_count = 0,
                                           const VkViewport* inherited_viewport = nullptr,
@@ -11604,14 +11605,17 @@ bool CoreChecks::PreCallValidateCmdExecuteCommands(VkCommandBuffer commandBuffer
                 assert(inherited_viewport != nullptr && expected_viewport_depth != nullptr);
                 if (inherited_viewport->minDepth != expected_viewport_depth->minDepth ||
                     inherited_viewport->maxDepth != expected_viewport_depth->maxDepth) {
-                    return LogError(cb_state->commandBuffer, "VUID-TODO",
+                    return LogError(cb_state->commandBuffer, "VUID-vkCmdDraw-commandBuffer-02701",
                         "vkCmdExecuteCommands(): Draw commands in pCommandBuffers[%u] (%s) consume inherited viewport %u %s"
                         "but this state was not inherited as its depth range [%f, %f] does not match "
                         "pViewportDepths[%u] = [%f, %f]",
                         unsigned(i), report_data->FormatHandle(sub_cb_state->commandBuffer).c_str(),
-                        unsigned(index), static_use_count >= index ? "(with count) " : "",
+                        unsigned(index), index >= static_use_count ? "(with count) " : "",
                         inherited_viewport->minDepth, inherited_viewport->maxDepth,
                         unsigned(i), expected_viewport_depth->minDepth, expected_viewport_depth->maxDepth);
+                    // akeley98 note: This VUID is not ideal; however, there isn't a more relevant VUID as
+                    // it isn't illegal in itself to have mismatched inherited viewport depths.
+                    // The error only occurs upon attempting to consume the viewport.
                 }
                 else {
                     return false;
@@ -11668,7 +11672,7 @@ bool CoreChecks::PreCallValidateCmdExecuteCommands(VkCommandBuffer commandBuffer
                 ss << "was left undefined after vkCmdBindPipeline (with non-dynamic state) in pCommandBuffers["
                    << i << "].";
             }
-            return LogError(cb_state->commandBuffer, "VUID-TODO", ss.str().c_str());
+            return LogError(cb_state->commandBuffer, "VUID-vkCmdDraw-commandBuffer-02701", ss.str().c_str());
         };
 
         // Validate state inheritance as specified by VK_NV_inherited_scissor_viewport.
@@ -11704,7 +11708,7 @@ bool CoreChecks::PreCallValidateCmdExecuteCommands(VkCommandBuffer commandBuffer
 
             if (sub_cb_state->usedDynamicViewportCount && viewport_count_state > sub_cb_state->inheritedViewportDepths.size()) {
                 skip |= LogError(
-                    cb_state->commandBuffer, "VUID-TODO",
+                    cb_state->commandBuffer, "VUID-vkCmdDraw-commandBuffer-02701",
                     "vkCmdExecuteCommands(): "
                     "Draw commands in pCommandBuffers[%u] (%s) consume inherited dynamic viewport with count state "
                     "but the dynamic viewport count (%u) exceeds the inheritance limit (viewportDepthCount=%u).",
@@ -13750,8 +13754,12 @@ bool CoreChecks::PreCallValidateCmdSetDiscardRectangleEXT(VkCommandBuffer comman
                                                           uint32_t discardRectangleCount,
                                                           const VkRect2D *pDiscardRectangles) const {
     const CMD_BUFFER_STATE *cb_state = GetCBState(commandBuffer);
+    bool skip = false;
     // Minimal validation for command buffer state
-    return ValidateCmd(cb_state, CMD_SETDISCARDRECTANGLEEXT, "vkCmdSetDiscardRectangleEXT()");
+    skip |= ValidateCmd(cb_state, CMD_SETDISCARDRECTANGLEEXT, "vkCmdSetDiscardRectangleEXT()");
+    skip |= ForbidInheritedViewportScissor(commandBuffer, cb_state, "VUID-vkCmdSetDiscardRectangleEXT-viewportScissor2D-04788",
+                                           "vkCmdSetDiscardRectangleEXT");
+    return skip;
 }
 
 bool CoreChecks::PreCallValidateCmdSetSampleLocationsEXT(VkCommandBuffer commandBuffer,
@@ -14814,7 +14822,8 @@ bool CoreChecks::PreCallValidateCmdSetViewportWithCountEXT(VkCommandBuffer comma
         skip |= LogError(commandBuffer, "VUID-vkCmdSetViewportWithCountEXT-None-03393",
                          "vkCmdSetViewportWithCountEXT: extendedDynamicState feature is not enabled.");
     }
-    skip |= ForbidInheritedViewportScissor(commandBuffer, cb_state, "vkCmdSetViewportWithCountEXT");
+    skip |= ForbidInheritedViewportScissor(commandBuffer, cb_state, "VUID-vkCmdSetViewportWithCountEXT-commandBuffer-04819",
+                                           "vkCmdSetViewportWithCountEXT");
 
     return skip;
 }
@@ -14830,7 +14839,8 @@ bool CoreChecks::PreCallValidateCmdSetScissorWithCountEXT(VkCommandBuffer comman
         skip |= LogError(commandBuffer, "VUID-vkCmdSetScissorWithCountEXT-None-03396",
                          "vkCmdSetScissorWithCountEXT: extendedDynamicState feature is not enabled.");
     }
-    skip |= ForbidInheritedViewportScissor(commandBuffer, cb_state, "vkCmdSetScissorWithCountEXT");
+    skip |= ForbidInheritedViewportScissor(commandBuffer, cb_state, "VUID-vkCmdSetScissorWithCountEXT-commandBuffer-04820",
+                                           "vkCmdSetScissorWithCountEXT");
 
     return skip;
 }
