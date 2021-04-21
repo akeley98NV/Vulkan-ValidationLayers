@@ -1962,6 +1962,12 @@ void ValidationStateTracker::PostCallRecordCreateDevice(VkPhysicalDevice gpu, co
         state_tracker->enabled_features.synchronization2_features = *synchronization2_features;
     }
 
+    const auto *inherited_viewport_scissor_features =
+        LvlFindInChain<VkPhysicalDeviceInheritedViewportScissorFeaturesNV>(pCreateInfo->pNext);
+    if (inherited_viewport_scissor_features) {
+        state_tracker->enabled_features.inherited_viewport_scissor_features = *inherited_viewport_scissor_features;
+    }
+
     // Store physical device properties and physical device mem limits into CoreChecks structs
     DispatchGetPhysicalDeviceMemoryProperties(gpu, &state_tracker->phys_dev_mem_props);
     DispatchGetPhysicalDeviceProperties(gpu, &state_tracker->phys_dev_props);

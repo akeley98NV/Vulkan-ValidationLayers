@@ -5956,6 +5956,11 @@ bool CoreChecks::PreCallValidateBeginCommandBuffer(VkCommandBuffer commandBuffer
             auto p_inherited_viewport_scissor_info =
                     LvlFindInChain<VkCommandBufferInheritanceViewportScissorInfoNV>(info->pNext);
             if (p_inherited_viewport_scissor_info != nullptr && p_inherited_viewport_scissor_info->viewportScissor2D) {
+                if (!enabled_features.inherited_viewport_scissor_features.inheritedViewportScissor2D)
+                {
+                    skip |= LogError(commandBuffer, "VUID-VkCommandBufferInheritanceViewportScissorInfoNV-viewportScissor2D-04782",
+                                     "vkBeginCommandBuffer(): inheritedViewportScissor2D feature not enabled.");
+                }
                 if (!(pBeginInfo->flags & VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT)) {
                     skip |= LogError(commandBuffer, "VUID-VkCommandBufferInheritanceViewportScissorInfoNV-viewportScissor2D-04786",
                                      "vkBeginCommandBuffer(): Secondary %s must be recorded with the"
