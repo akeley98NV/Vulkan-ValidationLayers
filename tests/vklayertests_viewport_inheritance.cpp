@@ -216,16 +216,55 @@ class ViewportInheritanceTestData {
 
     // Get the graphics pipeline with the specified viewport/scissor state configuration, creating it if needed.
     // viewport_scissor_count == 0 and dynamic_viewport_scissor == true indicates EXT viewport/scissor with count dynamic state.
+    // All pipelines are destroyed when the class is destroyed.
     VkPipeline GetGraphicsPipeline(bool dynamic_viewport_scissor, uint32_t viewport_scissor_count)
     {
+        assert(dynamic_viewport_scissor || viewport_scissor_count != 0);
         assert(size_t(viewport_scissor_count) < m_dynamicStatePipelines.size());
-        VkPipeline& pipeline =
-            (dynamic_viewport_scissor ? m_dynamicStatePipelines : m_staticStatePipelines)[viewport_scissor_count];
-        if (pipeline)
-        {
-            return pipeline;
+        VkPipeline* p_pipeline =
+            &(dynamic_viewport_scissor ? m_dynamicStatePipelines : m_staticStatePipelines)[viewport_scissor_count];
+        if (*p_pipeline) {
+            return *p_pipeline;
         }
-        return VK_NULL_HANDLE;
+
+        // Need some static viewport/scissors if no dynamic state. Their values don't really matter; the only purpose
+        // of static viewport/scissor pipelines is to test messing up the dynamic state.
+        std::vector<VkViewport> static_viewports;
+        std::vector<VkRect2D>   static_scissors;
+        if (!dynamic_viewport_scissor) {
+            VkViewport viewport { 0, 0, 128, 128, 0, 1 };
+            static_viewports = std::vector<VkViewport>(viewport_scissor_count, viewport);
+            static_scissors.resize(viewport_scissor_count);
+        }
+        VkPipelineViewportStateCreateInfo viewport_state = {VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+                                                            nullptr,
+                                                            0,
+                                                            viewport_scissor_count,
+                                                            static_viewports.data(),
+                                                            viewport_scissor_count,
+                                                            static_scissors.data()};
+        const VkPipelineDynamicStateCreateInfo& dynamic_state =
+            dynamic_viewport_scissor == false ? kStaticState : viewport_scissor_count == 0 ? kDynamicStateWithCount : kDynamicState;
+
+        VkGraphicsPipelineCreateInfo info = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+                                             nullptr,
+                                             0,
+                                             uint32_t(m_shaderStages.size()),
+                                             m_shaderStages.data(),
+                                             &kVertexInputState,
+                                             &kInputAssemblyState,
+                                             nullptr, // tess
+                                             &viewport_state,
+                                             &kRasterizationState,
+                                             &kMultisampleState,
+                                             &kDepthStencilState,
+                                             &kBlendState,
+                                             &dynamic_state,
+                                             m_pipelineLayout,
+                                             m_renderPass,
+                                             0};
+        VkResult result = vk::CreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &info, nullptr, p_pipeline);
+        return result >= 0 ? *p_pipeline : VK_NULL_HANDLE;
     }
 };
 
@@ -241,6 +280,7 @@ TEST_F(VkLayerTest, ViewportInheritancePositive) {
         printf("%s Test internal failure: %s\n", kSkipPrefix, test_data.FailureReason());
         return;
     }
+    test_data.GetGraphicsPipeline(true, 5);
     m_errorMonitor->VerifyNotFound();
 }
 
@@ -286,7 +326,7 @@ const VkPipelineVertexInputStateCreateInfo ViewportInheritanceTestData::kVertexI
     VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO, nullptr, 0, 0, nullptr, 0, nullptr};
 
 const VkPipelineInputAssemblyStateCreateInfo ViewportInheritanceTestData::kInputAssemblyState = {
-    VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO, nullptr, 0, VK_PRIMITIVE_TOPOLOGY_POINT_LIST, VK_FALSE};
+    VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO, nullptr, 0, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_FALSE};
 
 const VkPipelineRasterizationStateCreateInfo ViewportInheritanceTestData::kRasterizationState = {
     VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
