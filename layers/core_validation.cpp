@@ -11437,7 +11437,7 @@ class CoreChecks::ViewportScissorInheritanceTracker {
     // overwritten to undefined value by bound pipelines with non-dynamic state.
     bool VisitSecondaryNoInheritance(const ValidationObject *, uint32_t cmd_buffer_idx, const CMD_BUFFER_STATE *sub_cb_state) {
         viewport_mask |= sub_cb_state->viewportMask | sub_cb_state->viewportWithCountMask;
-        scissor_mask |= sub_cb_state->viewportMask | sub_cb_state->scissorWithCountMask;
+        scissor_mask |= sub_cb_state->scissorMask | sub_cb_state->scissorWithCountMask;
 
         for (uint32_t n = 0; n < max_viewports; ++n) {
             uint32_t bit = uint32_t(1) << n;

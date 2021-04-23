@@ -613,6 +613,36 @@ TEST_F(VkLayerTest, ViewportInheritance) {
         VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_VIEWPORT_SCISSOR_INFO_NV, nullptr, VK_TRUE, 1, test_data.kViewportArray};
     test_data.MakeBeginSecondaryCommandBuffer(pool, 0, &viewport_scissor);
     m_errorMonitor->VerifyFound();
+
+    // Check that validation layers allow getting inherited viewport/scissor state from earlier secondary command buffer, but not
+    // from a different vkCmdExecuteCommands.
+    VkCommandBuffer set_viewport_cmd = test_data.MakeBeginSubpassCommandBuffer(pool, 0, nullptr);
+    vk::CmdSetViewport(set_viewport_cmd, 0, 1, test_data.kViewportArray);
+    vk::EndCommandBuffer(set_viewport_cmd);
+    VkCommandBuffer set_scissor_cmd = test_data.MakeBeginSubpassCommandBuffer(pool, 0, nullptr);
+    vk::CmdSetScissor(set_scissor_cmd, 0, 1, test_data.kScissorArray);
+    vk::EndCommandBuffer(set_scissor_cmd);
+
+    for (int should_fail = 0; should_fail < 2; ++should_fail) {
+        test_data.BeginPrimaryCommandBuffer(primary_cmd);
+        test_data.BeginRenderPass(primary_cmd);
+        if (should_fail) {
+            m_errorMonitor->SetDesiredFailureMsg(kErrorBit, "VUID-vkCmdDraw-commandBuffer-02701"); // viewport
+            vk::CmdExecuteCommands(primary_cmd, 1, &set_viewport_cmd);
+            VkCommandBuffer secondaries[2] = {set_scissor_cmd, subpass_cmd};
+            vk::CmdExecuteCommands(primary_cmd, 2, secondaries);
+        }
+        else {
+            m_errorMonitor->ExpectSuccess();
+            VkCommandBuffer secondaries[3] = {set_viewport_cmd, set_scissor_cmd, subpass_cmd};
+            vk::CmdExecuteCommands(primary_cmd, 3, secondaries);
+        }
+        vk::CmdEndRenderPass(primary_cmd);
+        vk::EndCommandBuffer(primary_cmd);
+
+        if (should_fail) m_errorMonitor->VerifyFound();
+        else m_errorMonitor->VerifyNotFound();
+    }
 }
 
 
