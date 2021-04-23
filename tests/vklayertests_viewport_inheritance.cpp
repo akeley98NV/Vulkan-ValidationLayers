@@ -54,6 +54,14 @@ class ViewportInheritanceTestData {
     static const VkPipelineDynamicStateCreateInfo kDynamicState;
     static const VkPipelineDynamicStateCreateInfo kDynamicStateWithCount;
 
+  public:
+    // Premade viewport and scissor arrays for testing.
+    static const VkViewport kViewportArray[32];
+    static const VkViewport kViewportDepthOnlyArray[32];
+    static const VkViewport kViewportAlternateDepthArray[32];
+    static const VkRect2D kScissorArray[32];
+
+  private:
     // Set to a failure message if initialization failed.
     const char* m_failureReason = nullptr;
 
@@ -185,6 +193,43 @@ class ViewportInheritanceTestData {
     }
 
   public:
+    // Check if the gpu has the needed features, and call InitState requesting the needed features.
+    // Return whether the needed features were found or not.
+    static bool InitState(VkRenderFramework* p_framework, const char** pp_reason) {
+        VkPhysicalDeviceExtendedDynamicStateFeaturesEXT ext = {
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT, nullptr};
+        VkPhysicalDeviceInheritedViewportScissorFeaturesNV nv = {
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INHERITED_VIEWPORT_SCISSOR_FEATURES_NV, &ext};
+        VkPhysicalDeviceFeatures2 features2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &nv};
+        VkPhysicalDevice gpu = p_framework->gpu();
+
+        if (!p_framework->DeviceExtensionSupported(VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME)) {
+            *pp_reason = "missing " VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME;
+            return false;
+        }
+        if (!p_framework->DeviceExtensionSupported(VK_NV_INHERITED_VIEWPORT_SCISSOR_EXTENSION_NAME)) {
+            *pp_reason = "missing " VK_NV_INHERITED_VIEWPORT_SCISSOR_EXTENSION_NAME;
+            return false;
+        }
+        vk::GetPhysicalDeviceFeatures2(gpu, &features2);
+
+        if (!features2.features.multiViewport) {
+            *pp_reason = "missing multiViewport feature";
+            return false;
+        }
+        if (!nv.inheritedViewportScissor2D) {
+            *pp_reason = "missing inheritedViewportScissor2D feature";
+            return false;
+        }
+        if (!ext.extendedDynamicState) {
+            *pp_reason = "missing extendedDynamicState feature";
+            return false;
+        }
+
+        p_framework->InitState(nullptr, &features2, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
+        return true;
+    }
+
     ViewportInheritanceTestData(VkDeviceObj* p_device_obj, VkPhysicalDevice physical_device) : m_colorImageObj(p_device_obj) {
         m_device = p_device_obj->handle();
         try {
@@ -217,8 +262,7 @@ class ViewportInheritanceTestData {
     // Get the graphics pipeline with the specified viewport/scissor state configuration, creating it if needed.
     // viewport_scissor_count == 0 and dynamic_viewport_scissor == true indicates EXT viewport/scissor with count dynamic state.
     // All pipelines are destroyed when the class is destroyed.
-    VkPipeline GetGraphicsPipeline(bool dynamic_viewport_scissor, uint32_t viewport_scissor_count)
-    {
+    VkPipeline GetGraphicsPipeline(bool dynamic_viewport_scissor, uint32_t viewport_scissor_count) {
         assert(dynamic_viewport_scissor || viewport_scissor_count != 0);
         assert(size_t(viewport_scissor_count) < m_dynamicStatePipelines.size());
         VkPipeline* p_pipeline =
@@ -253,7 +297,7 @@ class ViewportInheritanceTestData {
                                              m_shaderStages.data(),
                                              &kVertexInputState,
                                              &kInputAssemblyState,
-                                             nullptr, // tess
+                                             nullptr,  // tess
                                              &viewport_state,
                                              &kRasterizationState,
                                              &kMultisampleState,
@@ -264,23 +308,116 @@ class ViewportInheritanceTestData {
                                              m_renderPass,
                                              0};
         VkResult result = vk::CreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &info, nullptr, p_pipeline);
+        if (result < 0) m_failureReason = "Failed to create graphics pipeline";
         return result >= 0 ? *p_pipeline : VK_NULL_HANDLE;
     }
+
+    // Bind the graphics pipeline with the specified viewport/scissor state configuration.
+    void BindGraphicsPipeline(VkCommandBuffer cmd, bool dynamic_viewport_scissor, uint32_t viewport_scissor_count) {
+        VkPipeline pipeline = GetGraphicsPipeline(dynamic_viewport_scissor, viewport_scissor_count);
+        if (pipeline) vk::CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    }
+
+    // Make a primary command buffer and begin recording.
+    VkCommandBuffer MakeBeginPrimaryCommandBuffer(VkCommandPool pool) const {
+        VkCommandBufferAllocateInfo info = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, nullptr, pool,
+                                            VK_COMMAND_BUFFER_LEVEL_PRIMARY, 1};
+        VkCommandBuffer cmd;
+        vk::AllocateCommandBuffers(m_device, &info, &cmd);
+        BeginPrimaryCommandBuffer(cmd);
+        return cmd;
+    }
+
+    // Begin recording the primary command buffer.
+    VkResult BeginPrimaryCommandBuffer(VkCommandBuffer cmd) const {
+        VkCommandBufferBeginInfo info = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, nullptr, 0, nullptr};
+        return vk::BeginCommandBuffer(cmd, &info);
+    }
+
+    // Begin the render pass, with subpass contents provided by secondary command buffers.
+    void BeginRenderPass(VkCommandBuffer cmd) const {
+        VkRenderPassBeginInfo info = {
+            VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO, nullptr, m_renderPass, m_framebuffer, {{0, 0}, {128, 128}}, 0, nullptr};
+        vk::CmdBeginRenderPass(cmd, &info, VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS);
+    }
+
+    // Make a secondary (non-subpass) command buffer and begin recording.
+    VkCommandBuffer MakeBeginSecondaryCommandBuffer(VkCommandPool pool) const {
+        VkCommandBufferAllocateInfo info = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, nullptr, pool,
+                                            VK_COMMAND_BUFFER_LEVEL_SECONDARY, 1};
+        VkCommandBuffer cmd;
+        vk::AllocateCommandBuffers(m_device, &info, &cmd);
+        BeginSecondaryCommandBuffer(cmd);
+        return cmd;
+    }
+
+    // Begin recording the (non-subpass) secondary command buffer.
+    VkResult BeginSecondaryCommandBuffer(VkCommandBuffer cmd) const {
+        VkCommandBufferBeginInfo info = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, nullptr,
+                                         VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT, nullptr};
+        return vk::BeginCommandBuffer(cmd, &info);
+    }
+
+    // Make a subpass secondary command buffer (for the class's render pass) and begin recording.
+    // If a nonzero array of viewports is given, this enabled viewport/scissor inheritance and
+    // passes the list of expected viewport depths.
+    VkCommandBuffer MakeBeginSubpassCommandBuffer(VkCommandPool pool, uint32_t inherited_viewport_count,
+                                                  const VkViewport* p_viewport_depths) const {
+        VkCommandBufferAllocateInfo info = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, nullptr, pool,
+                                            VK_COMMAND_BUFFER_LEVEL_SECONDARY, 1};
+        VkCommandBuffer cmd;
+        vk::AllocateCommandBuffers(m_device, &info, &cmd);
+        BeginSubpassCommandBuffer(cmd, inherited_viewport_count, p_viewport_depths);
+        return cmd;
+    }
+
+    // Same as above, but recycle the given secondary command buffer.
+    VkResult BeginSubpassCommandBuffer(VkCommandBuffer cmd, uint32_t inherited_viewport_count,
+                                       const VkViewport* p_viewport_depths) const {
+        VkCommandBufferInheritanceViewportScissorInfoNV viewport_scissor = {
+            VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_VIEWPORT_SCISSOR_INFO_NV, nullptr,
+            inherited_viewport_count != 0, inherited_viewport_count, p_viewport_depths };
+        VkCommandBufferInheritanceInfo inheritance = {
+            VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO, &viewport_scissor, m_renderPass, 0, m_framebuffer };
+        VkCommandBufferBeginInfo info = {
+            VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, nullptr,
+            VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT | VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT, &inheritance};
+        return vk::BeginCommandBuffer(cmd, &info);
+    }
 };
-
-
 
 TEST_F(VkLayerTest, ViewportInheritancePositive) {
     TEST_DESCRIPTION("Error-free usage of VK_NV_inherited_viewport_scissor");
     ASSERT_NO_FATAL_FAILURE(InitFramework(m_errorMonitor));
-    ASSERT_NO_FATAL_FAILURE(InitState());
+    bool has_features;
+    const char* missing_feature_string;
+    ASSERT_NO_FATAL_FAILURE(has_features = ViewportInheritanceTestData::InitState(this, &missing_feature_string));
+    if (!has_features) {
+        printf("%s\n", missing_feature_string);
+        return;
+    }
+
     m_errorMonitor->ExpectSuccess();
     ViewportInheritanceTestData test_data(m_device, gpu());
     if (test_data.FailureReason()) {
         printf("%s Test internal failure: %s\n", kSkipPrefix, test_data.FailureReason());
         return;
     }
-    test_data.GetGraphicsPipeline(true, 5);
+    VkCommandPool pool = m_commandPool->handle();
+
+    VkCommandBuffer subpass_cmd = test_data.MakeBeginSubpassCommandBuffer(pool, 1, test_data.kViewportDepthOnlyArray);
+    test_data.BindGraphicsPipeline(subpass_cmd, true, 1);
+    vk::CmdDraw(subpass_cmd, 3, 1, 0, 0);
+    vk::EndCommandBuffer(subpass_cmd);
+
+    VkCommandBuffer primary_cmd = test_data.MakeBeginPrimaryCommandBuffer(pool);
+    vk::CmdSetViewport(primary_cmd, 0, 1, test_data.kViewportArray);
+    vk::CmdSetScissor(primary_cmd, 0, 1, test_data.kScissorArray);
+    test_data.BeginRenderPass(primary_cmd);
+    vk::CmdExecuteCommands(primary_cmd, 1, &subpass_cmd);
+    vk::CmdEndRenderPass(primary_cmd);
+    vk::EndCommandBuffer(primary_cmd);
+
     m_errorMonitor->VerifyNotFound();
 }
 
@@ -381,3 +518,47 @@ static const std::array<VkDynamicState, 2> kDynamicStateWithCountArray = {VK_DYN
 const VkPipelineDynamicStateCreateInfo ViewportInheritanceTestData::kDynamicStateWithCount = {
     VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO, nullptr, 0, kDynamicStateWithCountArray.size(),
     kDynamicStateWithCountArray.data()};
+
+const VkViewport ViewportInheritanceTestData::kViewportArray[32] = {
+    {0, 0, 128, 128, 0.00, 1.00}, {0, 0, 128, 128, 0.01, 0.99}, {0, 0, 128, 128, 0.02, 0.98}, {0, 0, 128, 128, 0.03, 0.97},
+    {0, 0, 128, 128, 0.04, 0.96}, {0, 0, 128, 128, 0.05, 0.95}, {0, 0, 128, 128, 0.06, 0.94}, {0, 0, 128, 128, 0.07, 0.93},
+    {0, 0, 128, 128, 0.08, 0.92}, {0, 0, 128, 128, 0.09, 0.91}, {0, 0, 128, 128, 0.10, 0.90}, {0, 0, 128, 128, 0.11, 0.89},
+    {0, 0, 128, 128, 0.12, 0.88}, {0, 0, 128, 128, 0.13, 0.87}, {0, 0, 128, 128, 0.14, 0.86}, {0, 0, 128, 128, 0.15, 0.85},
+    {0, 0, 128, 128, 0.16, 0.84}, {0, 0, 128, 128, 0.17, 0.83}, {0, 0, 128, 128, 0.18, 0.82}, {0, 0, 128, 128, 0.19, 0.81},
+    {0, 0, 128, 128, 0.20, 0.80}, {0, 0, 128, 128, 0.21, 0.79}, {0, 0, 128, 128, 0.22, 0.78}, {0, 0, 128, 128, 0.23, 0.77},
+    {0, 0, 128, 128, 0.24, 0.76}, {0, 0, 128, 128, 0.25, 0.75}, {0, 0, 128, 128, 0.26, 0.74}, {0, 0, 128, 128, 0.27, 0.73},
+    {0, 0, 128, 128, 0.28, 0.72}, {0, 0, 128, 128, 0.29, 0.71}, {0, 0, 128, 128, 0.30, 0.70}, {0, 0, 128, 128, 0.31, 0.69},
+};
+
+const VkViewport ViewportInheritanceTestData::kViewportDepthOnlyArray[32] = {
+    {0, 0, 0, 0, 0.00, 1.00}, {0, 0, 0, 0, 0.01, 0.99}, {0, 0, 0, 0, 0.02, 0.98}, {0, 0, 0, 0, 0.03, 0.97},
+    {0, 0, 0, 0, 0.04, 0.96}, {0, 0, 0, 0, 0.05, 0.95}, {0, 0, 0, 0, 0.06, 0.94}, {0, 0, 0, 0, 0.07, 0.93},
+    {0, 0, 0, 0, 0.08, 0.92}, {0, 0, 0, 0, 0.09, 0.91}, {0, 0, 0, 0, 0.10, 0.90}, {0, 0, 0, 0, 0.11, 0.89},
+    {0, 0, 0, 0, 0.12, 0.88}, {0, 0, 0, 0, 0.13, 0.87}, {0, 0, 0, 0, 0.14, 0.86}, {0, 0, 0, 0, 0.15, 0.85},
+    {0, 0, 0, 0, 0.16, 0.84}, {0, 0, 0, 0, 0.17, 0.83}, {0, 0, 0, 0, 0.18, 0.82}, {0, 0, 0, 0, 0.19, 0.81},
+    {0, 0, 0, 0, 0.20, 0.80}, {0, 0, 0, 0, 0.21, 0.79}, {0, 0, 0, 0, 0.22, 0.78}, {0, 0, 0, 0, 0.23, 0.77},
+    {0, 0, 0, 0, 0.24, 0.76}, {0, 0, 0, 0, 0.25, 0.75}, {0, 0, 0, 0, 0.26, 0.74}, {0, 0, 0, 0, 0.27, 0.73},
+    {0, 0, 0, 0, 0.28, 0.72}, {0, 0, 0, 0, 0.29, 0.71}, {0, 0, 0, 0, 0.30, 0.70}, {0, 0, 0, 0, 0.31, 0.69},
+};
+
+
+const VkViewport ViewportInheritanceTestData::kViewportAlternateDepthArray[32] = {
+    {0, 0, 128, 128, 0.00, 1.00}, {0, 0, 128, 128, 0.01, 0.00}, {0, 0, 128, 128, 0.00, 0.98}, {0, 0, 128, 128, 0.03, 0.00},
+    {0, 0, 128, 128, 0.00, 0.96}, {0, 0, 128, 128, 0.05, 0.00}, {0, 0, 128, 128, 0.00, 0.94}, {0, 0, 128, 128, 0.07, 0.00},
+    {0, 0, 128, 128, 0.00, 0.92}, {0, 0, 128, 128, 0.09, 0.00}, {0, 0, 128, 128, 0.00, 0.90}, {0, 0, 128, 128, 0.11, 0.00},
+    {0, 0, 128, 128, 0.00, 0.88}, {0, 0, 128, 128, 0.13, 0.00}, {0, 0, 128, 128, 0.00, 0.86}, {0, 0, 128, 128, 0.15, 0.00},
+    {0, 0, 128, 128, 0.00, 0.84}, {0, 0, 128, 128, 0.17, 0.00}, {0, 0, 128, 128, 0.00, 0.82}, {0, 0, 128, 128, 0.19, 0.00},
+    {0, 0, 128, 128, 0.00, 0.80}, {0, 0, 128, 128, 0.21, 0.00}, {0, 0, 128, 128, 0.00, 0.78}, {0, 0, 128, 128, 0.23, 0.00},
+    {0, 0, 128, 128, 0.00, 0.76}, {0, 0, 128, 128, 0.25, 0.00}, {0, 0, 128, 128, 0.00, 0.74}, {0, 0, 128, 128, 0.27, 0.00},
+    {0, 0, 128, 128, 0.00, 0.72}, {0, 0, 128, 128, 0.29, 0.00}, {0, 0, 128, 128, 0.00, 0.70}, {0, 0, 128, 128, 0.31, 0.00},
+};
+
+const VkRect2D ViewportInheritanceTestData::kScissorArray[32] = {
+    {{0, 0}, {128, 128}}, {{0, 0}, {128, 128}}, {{0, 0}, {128, 128}}, {{0, 0}, {128, 128}}, {{0, 0}, {128, 128}},
+    {{0, 0}, {128, 128}}, {{0, 0}, {128, 128}}, {{0, 0}, {128, 128}}, {{0, 0}, {128, 128}}, {{0, 0}, {128, 128}},
+    {{0, 0}, {128, 128}}, {{0, 0}, {128, 128}}, {{0, 0}, {128, 128}}, {{0, 0}, {128, 128}}, {{0, 0}, {128, 128}},
+    {{0, 0}, {128, 128}}, {{0, 0}, {128, 128}}, {{0, 0}, {128, 128}}, {{0, 0}, {128, 128}}, {{0, 0}, {128, 128}},
+    {{0, 0}, {128, 128}}, {{0, 0}, {128, 128}}, {{0, 0}, {128, 128}}, {{0, 0}, {128, 128}}, {{0, 0}, {128, 128}},
+    {{0, 0}, {128, 128}}, {{0, 0}, {128, 128}}, {{0, 0}, {128, 128}}, {{0, 0}, {128, 128}}, {{0, 0}, {128, 128}},
+    {{0, 0}, {128, 128}}, {{0, 0}, {128, 128}},
+};
