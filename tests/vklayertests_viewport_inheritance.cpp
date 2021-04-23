@@ -342,19 +342,21 @@ class ViewportInheritanceTestData {
     }
 
     // Make a secondary (non-subpass) command buffer and begin recording.
-    VkCommandBuffer MakeBeginSecondaryCommandBuffer(VkCommandPool pool) const {
+    VkCommandBuffer MakeBeginSecondaryCommandBuffer(VkCommandPool pool, VkFlags usage = 0,
+                                                    const void* inheritance_pNext = nullptr) const {
         VkCommandBufferAllocateInfo info = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, nullptr, pool,
                                             VK_COMMAND_BUFFER_LEVEL_SECONDARY, 1};
         VkCommandBuffer cmd;
         vk::AllocateCommandBuffers(m_device, &info, &cmd);
-        BeginSecondaryCommandBuffer(cmd);
+        BeginSecondaryCommandBuffer(cmd, usage, inheritance_pNext);
         return cmd;
     }
 
     // Begin recording the (non-subpass) secondary command buffer.
-    VkResult BeginSecondaryCommandBuffer(VkCommandBuffer cmd) const {
-        VkCommandBufferBeginInfo info = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, nullptr,
-                                         VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT, nullptr};
+    VkResult BeginSecondaryCommandBuffer(VkCommandBuffer cmd, VkFlags usage = 0, const void* inheritance_pNext = nullptr) const {
+        VkCommandBufferInheritanceInfo inheritance = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO, inheritance_pNext,
+                                                      m_renderPass};
+        VkCommandBufferBeginInfo info = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, nullptr, usage, &inheritance};
         return vk::BeginCommandBuffer(cmd, &info);
     }
 
@@ -562,7 +564,55 @@ TEST_F(VkLayerTest, ViewportInheritance) {
         else m_errorMonitor->VerifyNotFound();
     }
 
-    // Check that the validation layers are not okay with binding static viewport/scissor pipelines when inheritance enabled.
+    // Check that the validation layers are not okay with binding static viewport/scissor pipelines when inheritance enabled, or
+    // setting viewport/scissor explicitly, but are okay if inheritance is not enabled (no regression).
+    for (int should_fail = 0; should_fail < 2; ++should_fail) {
+        if (!should_fail) m_errorMonitor->ExpectSuccess();
+
+        if (should_fail) m_errorMonitor->SetDesiredFailureMsg(kErrorBit, "VUID-vkCmdBindPipeline-commandBuffer-04808");
+        test_data.BeginSubpassCommandBuffer(no_draw_cmd, should_fail, test_data.kViewportDepthOnlyArray);
+        test_data.BindGraphicsPipeline(no_draw_cmd, false, 1);
+        if (should_fail) m_errorMonitor->VerifyFound();
+
+        // Check that the validation layers flag setting viewport/scissor with inheritance.
+        if (should_fail) m_errorMonitor->SetDesiredFailureMsg(kErrorBit, "VUID-vkCmdSetViewport-commandBuffer-04821");
+        vk::CmdSetViewport(no_draw_cmd, 0, 1, test_data.kViewportArray);
+        if (should_fail) m_errorMonitor->VerifyFound();
+        if (should_fail) m_errorMonitor->SetDesiredFailureMsg(kErrorBit, "VUID-vkCmdSetScissor-viewportScissor2D-04789");
+        vk::CmdSetScissor(no_draw_cmd, 0, 1, test_data.kScissorArray);
+        if (should_fail) m_errorMonitor->VerifyFound();
+
+        vk::EndCommandBuffer(no_draw_cmd);
+        if (!should_fail) m_errorMonitor->VerifyNotFound();
+    }
+
+    // Check for at least 1 viewport depth given when enabling inheritance.
+    for (int should_fail = 0; should_fail < 2; ++should_fail) {
+        if (should_fail) {
+            m_errorMonitor->SetDesiredFailureMsg(kErrorBit,
+                                                 "VUID-VkCommandBufferInheritanceViewportScissorInfoNV-viewportScissor2D-04784");
+        }
+        else {
+            m_errorMonitor->ExpectSuccess();
+        }
+        VkCommandBufferInheritanceViewportScissorInfoNV viewport_scissor = {
+            VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_VIEWPORT_SCISSOR_INFO_NV, nullptr, should_fail ? VK_TRUE : VK_FALSE,
+            0, test_data.kViewportArray /* avoid null pointer crash still */ };
+        VkCommandBuffer cmd =
+            test_data.MakeBeginSecondaryCommandBuffer(pool, VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT, &viewport_scissor);
+        // vk::EndCommandBuffer(cmd); // seg faults.
+        (void)cmd;
+
+        if (should_fail) m_errorMonitor->VerifyFound();
+        else m_errorMonitor->VerifyNotFound();
+    }
+
+    // Check for VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT
+    m_errorMonitor->SetDesiredFailureMsg(kErrorBit, "VUID-VkCommandBufferInheritanceViewportScissorInfoNV-viewportScissor2D-04786");
+    VkCommandBufferInheritanceViewportScissorInfoNV viewport_scissor = {
+        VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_VIEWPORT_SCISSOR_INFO_NV, nullptr, VK_TRUE, 1, test_data.kViewportArray};
+    test_data.MakeBeginSecondaryCommandBuffer(pool, 0, &viewport_scissor);
+    m_errorMonitor->VerifyFound();
 }
 
 
