@@ -1,4 +1,4 @@
-/*
+/* Copyright (c) 2021 The Khronos Group Inc.
  * Copyright (c) 2021 NVIDIA Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,6 +13,7 @@
 #include <array>
 #include <cassert>
 #include <stdio.h>
+#include <vector>
 
 #include "layer_validation_tests.h"
 
@@ -195,7 +196,9 @@ class ViewportInheritanceTestData {
   public:
     // Check if the gpu has the needed features, and call InitState requesting the needed features.
     // Return whether the needed features were found or not.
-    static bool InitState(VkRenderFramework* p_framework, const char** pp_reason, bool inheritedViewportScissor2D = true) {
+    template <typename AddDeviceExtension>
+    static bool InitState(VkRenderFramework* p_framework, AddDeviceExtension add_device_extension, const char** pp_reason,
+                          bool inheritedViewportScissor2D = true) {
         VkPhysicalDeviceExtendedDynamicStateFeaturesEXT ext = {
             VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT, nullptr};
         VkPhysicalDeviceInheritedViewportScissorFeaturesNV nv = {
@@ -207,10 +210,12 @@ class ViewportInheritanceTestData {
             *pp_reason = "missing " VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME;
             return false;
         }
+        add_device_extension(VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME);
         if (!p_framework->DeviceExtensionSupported(VK_NV_INHERITED_VIEWPORT_SCISSOR_EXTENSION_NAME)) {
             *pp_reason = "missing " VK_NV_INHERITED_VIEWPORT_SCISSOR_EXTENSION_NAME;
             return false;
         }
+        add_device_extension(VK_NV_INHERITED_VIEWPORT_SCISSOR_EXTENSION_NAME);
         vk::GetPhysicalDeviceFeatures2(gpu, &features2);
 
         if (!features2.features.multiViewport) {
@@ -394,7 +399,10 @@ TEST_F(VkLayerTest, ViewportInheritance) {
     ASSERT_NO_FATAL_FAILURE(InitFramework(m_errorMonitor));
     bool has_features;
     const char* missing_feature_string;
-    ASSERT_NO_FATAL_FAILURE(has_features = ViewportInheritanceTestData::InitState(this, &missing_feature_string));
+    auto self = this;
+    ASSERT_NO_FATAL_FAILURE(
+        has_features = ViewportInheritanceTestData::InitState(
+            this, [self](const char* extension) { self->m_device_extension_names.push_back(extension); }, &missing_feature_string));
     if (!has_features) {
         printf("%s\n", missing_feature_string);
         return;
@@ -651,7 +659,10 @@ TEST_F(VkLayerTest, ViewportInheritanceMissingFeature) {
     ASSERT_NO_FATAL_FAILURE(InitFramework(m_errorMonitor));
     bool has_features;
     const char* missing_feature_string;
-    ASSERT_NO_FATAL_FAILURE(has_features = ViewportInheritanceTestData::InitState(this, &missing_feature_string, false));
+    auto self = this;
+    ASSERT_NO_FATAL_FAILURE(has_features = ViewportInheritanceTestData::InitState(
+                                this, [self](const char* extension) { self->m_device_extension_names.push_back(extension); },
+                                &missing_feature_string, false));
     if (!has_features) {
         printf("%s\n", missing_feature_string);
         return;
@@ -671,6 +682,192 @@ TEST_F(VkLayerTest, ViewportInheritanceMissingFeature) {
     m_errorMonitor->SetDesiredFailureMsg(kErrorBit, "VUID-VkCommandBufferInheritanceViewportScissorInfoNV-viewportScissor2D-04782");
     test_data.MakeBeginSubpassCommandBuffer(pool, 1, test_data.kViewportArray);
     m_errorMonitor->VerifyFound();
+}
+
+TEST_F(VkLayerTest, ViewportInheritanceMultiViewport) {
+    TEST_DESCRIPTION("VK_NV_inherited_viewport_scissor tests with multiple viewports/scissors");
+    ASSERT_NO_FATAL_FAILURE(InitFramework(m_errorMonitor));
+    bool has_features;
+    const char* missing_feature_string;
+    auto self = this;
+    ASSERT_NO_FATAL_FAILURE(
+        has_features = ViewportInheritanceTestData::InitState(
+            this, [self](const char* extension) { self->m_device_extension_names.push_back(extension); }, &missing_feature_string));
+    if (!has_features) {
+        printf("%s\n", missing_feature_string);
+        return;
+    }
+
+    ViewportInheritanceTestData test_data(m_device, gpu());
+    if (test_data.FailureReason()) {
+        printf("%s Test internal failure: %s\n", kSkipPrefix, test_data.FailureReason());
+        return;
+    }
+    VkCommandPool pool = m_commandPool->handle();
+
+    // Test using viewport/scissor with count state without providing it to be inherited.
+    m_errorMonitor->SetDesiredFailureMsg(kErrorBit, "VUID-vkCmdDraw-commandBuffer-02701"); // viewport
+    m_errorMonitor->SetDesiredFailureMsg(kErrorBit, "VUID-vkCmdDraw-commandBuffer-02701"); // scissor
+    VkCommandBuffer draw_cmd = test_data.MakeBeginSubpassCommandBuffer(pool, 1, test_data.kViewportArray);
+    test_data.BindGraphicsPipeline(draw_cmd, true, 0 /* dynamic viewport and scissor count */);
+    vk::CmdDraw(draw_cmd, 3, 1, 0, 0);
+    vk::EndCommandBuffer(draw_cmd);
+
+    VkCommandBuffer primary_cmd = test_data.MakeBeginPrimaryCommandBuffer(pool);
+    vk::CmdSetViewport(primary_cmd, 0, 1, test_data.kViewportArray); // inadequate, needs with count
+    vk::CmdSetScissor(primary_cmd, 0, 1, test_data.kScissorArray);
+    test_data.BeginRenderPass(primary_cmd);
+    vk::CmdExecuteCommands(primary_cmd, 1, &draw_cmd);
+    vk::CmdEndRenderPass(primary_cmd);
+    vk::EndCommandBuffer(primary_cmd);
+    m_errorMonitor->VerifyFound();
+
+    // Test drawing with pipeline that uses more viewports than have been inherited.
+    for (int i = 0; i < 4; ++i) {
+        bool should_fail = i & 1;
+        if (should_fail) m_errorMonitor->SetDesiredFailureMsg(kErrorBit, "VUID-vkCmdDraw-commandBuffer-02701"); // viewport
+        else m_errorMonitor->ExpectSuccess();
+
+        test_data.BeginSubpassCommandBuffer(draw_cmd, should_fail ? 1 : 2, test_data.kViewportDepthOnlyArray);
+        test_data.BindGraphicsPipeline(draw_cmd, true, 2); // Uses 2 viewports
+        vk::CmdDraw(draw_cmd, 3, 1, 0, 0);
+        if (i & 2) {
+            // Uses only 1 viewport, should not cause us to "forget" the earlier need for 2 viewports.
+            test_data.BindGraphicsPipeline(draw_cmd, true, 1);
+            vk::CmdDraw(draw_cmd, 3, 1, 0, 0);
+        }
+        vk::EndCommandBuffer(draw_cmd);
+
+        test_data.BeginPrimaryCommandBuffer(primary_cmd);
+        vk::CmdSetViewport(primary_cmd, 0, 2, test_data.kViewportArray);
+        vk::CmdSetScissor(primary_cmd, 0, 2, test_data.kScissorArray);
+        test_data.BeginRenderPass(primary_cmd);
+        vk::CmdExecuteCommands(primary_cmd, 1, &draw_cmd);
+        vk::CmdEndRenderPass(primary_cmd);
+        vk::EndCommandBuffer(primary_cmd);
+
+        if (should_fail) m_errorMonitor->VerifyFound();
+        else m_errorMonitor->VerifyNotFound();
+    }
+
+    // Test providing needed viewports in secondary command buffer, and trashing it by binding static state pipeline in another
+    // secondary command buffer.
+    VkCommandBuffer set_state_fixed_count_cmd = test_data.MakeBeginSubpassCommandBuffer(pool, 0, nullptr);
+    vk::CmdSetViewport(set_state_fixed_count_cmd, 0, 2, test_data.kViewportArray);
+    vk::CmdSetScissor(set_state_fixed_count_cmd, 0, 2, test_data.kScissorArray);
+    vk::EndCommandBuffer(set_state_fixed_count_cmd);
+
+    auto vkCmdSetViewportWithCountEXT =
+        PFN_vkCmdSetViewportWithCountEXT(vk::GetDeviceProcAddr(m_device->handle(), "vkCmdSetViewportWithCountEXT"));
+    assert(vkCmdSetViewportWithCountEXT);
+    auto vkCmdSetScissorWithCountEXT =
+        PFN_vkCmdSetScissorWithCountEXT(vk::GetDeviceProcAddr(m_device->handle(), "vkCmdSetScissorWithCountEXT"));
+    assert(vkCmdSetScissorWithCountEXT);
+
+    VkCommandBuffer set_state_with_count_cmd = test_data.MakeBeginSubpassCommandBuffer(pool, 0, nullptr);
+    vkCmdSetViewportWithCountEXT(set_state_with_count_cmd, 2, test_data.kViewportArray);
+    vkCmdSetScissorWithCountEXT(set_state_with_count_cmd, 2, test_data.kScissorArray);
+    vk::EndCommandBuffer(set_state_with_count_cmd);
+
+    VkCommandBuffer static_state_cmd = test_data.MakeBeginSubpassCommandBuffer(pool, 0, nullptr);
+    test_data.BindGraphicsPipeline(static_state_cmd, false, 2);
+    test_data.BindGraphicsPipeline(static_state_cmd, true, 1);  // Should not "forgive" eariler static state pipeline.
+    vk::EndCommandBuffer(static_state_cmd);
+
+    for (int i = 0; i < 8; ++i) {
+        bool should_fail = i & 1;
+        bool use_with_count = i & 4;
+        if (should_fail) {
+            m_errorMonitor->SetDesiredFailureMsg(kErrorBit, "VUID-vkCmdDraw-commandBuffer-02701"); // viewport 0 (or with count)
+            m_errorMonitor->SetDesiredFailureMsg(kErrorBit, "VUID-vkCmdDraw-commandBuffer-02701"); // scissor 0 (or with count)
+            if (!use_with_count) {
+                m_errorMonitor->SetDesiredFailureMsg(kErrorBit, "VUID-vkCmdDraw-commandBuffer-02701"); // viewport 1
+                m_errorMonitor->SetDesiredFailureMsg(kErrorBit, "VUID-vkCmdDraw-commandBuffer-02701"); // scissor 1
+            }
+        }
+        else {
+            m_errorMonitor->ExpectSuccess();
+        }
+
+        test_data.BeginSubpassCommandBuffer(draw_cmd, 2, test_data.kViewportDepthOnlyArray);
+        test_data.BindGraphicsPipeline(draw_cmd, true, use_with_count ? 0 : 2);
+        vk::CmdDraw(draw_cmd, 3, 1, 0, 0);
+        vk::EndCommandBuffer(draw_cmd);
+
+        VkCommandBuffer set_state_cmd = use_with_count ? set_state_with_count_cmd : set_state_fixed_count_cmd;
+        VkCommandBuffer secondaries[3];
+        uint32_t secondaries_count;
+
+        switch (i % 4) {
+            case 0:
+                secondaries[0] = static_state_cmd;
+                secondaries[1] = set_state_cmd;
+                secondaries[2] = draw_cmd;
+                secondaries_count = 3;
+                break;
+            case 1:
+                secondaries[0] = draw_cmd;
+                secondaries_count = 1;
+                break;
+            case 2:
+                secondaries[0] = set_state_cmd;
+                secondaries[1] = draw_cmd;
+                secondaries[2] = static_state_cmd; // Okay as it's after the drawing commands.
+                secondaries_count = 3;
+                break;
+            case 3: default:
+                secondaries[0] = set_state_cmd;
+                secondaries[1] = static_state_cmd; // Trashes the dynamic state
+                secondaries[2] = draw_cmd;
+                secondaries_count = 3;
+                break;
+        }
+
+        test_data.BeginPrimaryCommandBuffer(primary_cmd);
+        test_data.BeginRenderPass(primary_cmd);
+        vk::CmdExecuteCommands(primary_cmd, secondaries_count, secondaries);
+        vk::CmdEndRenderPass(primary_cmd);
+        vk::EndCommandBuffer(primary_cmd);
+
+        if (should_fail) m_errorMonitor->VerifyFound();
+        else m_errorMonitor->VerifyNotFound();
+    }
+
+    // Test mismatched depth count detection, but allow it if the mismatched viewport is not actually used.
+    // 0: viewport 1 mismatch, passes as draw only consumes correct 0th viewport.
+    // 1: fail, mismatched viewport 1.
+    // 2: pass, 2 correct viewports used. (also tests vkCmdSetViewport split between primary and secondary).
+    for (int i = 0; i < 3; ++i) {
+        bool should_fail = i & 1;
+        if (should_fail) {
+            m_errorMonitor->SetDesiredFailureMsg(kErrorBit, "VUID-vkCmdDraw-commandBuffer-02701"); // viewport 1
+        }
+        else {
+            m_errorMonitor->ExpectSuccess();
+        }
+
+        test_data.BeginSubpassCommandBuffer(draw_cmd, 2, test_data.kViewportDepthOnlyArray);
+        test_data.BindGraphicsPipeline(draw_cmd, true, i == 0 ? 1 : 2);
+        vk::CmdDraw(draw_cmd, 3, 1, 0, 0);
+        vk::EndCommandBuffer(draw_cmd);
+
+        test_data.BeginSubpassCommandBuffer(set_state_fixed_count_cmd, 0, nullptr);
+        vk::CmdSetViewport(set_state_fixed_count_cmd, 1, 1, i == 2 ? &test_data.kViewportArray[1] : &test_data.kViewportAlternateDepthArray[1]);
+        vk::CmdSetScissor(set_state_fixed_count_cmd, 1, 1, &test_data.kScissorArray[1]);
+        vk::EndCommandBuffer(set_state_fixed_count_cmd);
+
+        test_data.BeginPrimaryCommandBuffer(primary_cmd);
+        test_data.BeginRenderPass(primary_cmd);
+        vk::CmdSetViewport(primary_cmd, 0, 1, &test_data.kViewportArray[0]);
+        vk::CmdSetScissor(primary_cmd, 0, 1, &test_data.kScissorArray[0]);
+        VkCommandBuffer secondaries[] = {set_state_fixed_count_cmd, draw_cmd};
+        vk::CmdExecuteCommands(primary_cmd, 2, secondaries);
+        vk::CmdEndRenderPass(primary_cmd);
+        vk::EndCommandBuffer(primary_cmd);
+    }
+
+    // Test dynamic viewport count exceeding inheritance limit.
+    // test_data.BeginSubpassCommandBuffer(draw_cmd, )
 }
 
 

@@ -11374,6 +11374,7 @@ bool CoreChecks::ValidateSecondaryCommandBufferState(const CMD_BUFFER_STATE *pCB
 
 // Object that simulates the inherited viewport/scissor state as the device executes the called secondary command buffers.
 // Visit the calling primary command buffer first, then the called secondaries in order.
+// Contact David Zhao Akeley <dakeley@nvidia.com> for clarifications and bug fixes.
 class CoreChecks::ViewportScissorInheritanceTracker {
     const CMD_BUFFER_STATE *cb_state = nullptr;
 
@@ -11512,10 +11513,6 @@ class CoreChecks::ViewportScissorInheritanceTracker {
                     break;
                 case VK_DYNAMIC_STATE_VIEWPORT:
                     state_name = "viewport";
-                    format_index = true;
-                    break;
-                case VK_DYNAMIC_STATE_EXCLUSIVE_SCISSOR_NV:  // akeley98 TODO not used but should be
-                    state_name = "exclusive scissor";
                     format_index = true;
                     break;
                 case VK_DYNAMIC_STATE_VIEWPORT_WITH_COUNT_EXT:
