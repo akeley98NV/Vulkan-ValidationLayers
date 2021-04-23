@@ -195,7 +195,7 @@ class ViewportInheritanceTestData {
   public:
     // Check if the gpu has the needed features, and call InitState requesting the needed features.
     // Return whether the needed features were found or not.
-    static bool InitState(VkRenderFramework* p_framework, const char** pp_reason) {
+    static bool InitState(VkRenderFramework* p_framework, const char** pp_reason, bool inheritedViewportScissor2D = true) {
         VkPhysicalDeviceExtendedDynamicStateFeaturesEXT ext = {
             VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT, nullptr};
         VkPhysicalDeviceInheritedViewportScissorFeaturesNV nv = {
@@ -225,6 +225,7 @@ class ViewportInheritanceTestData {
             *pp_reason = "missing extendedDynamicState feature";
             return false;
         }
+        nv.inheritedViewportScissor2D = inheritedViewportScissor2D;
 
         p_framework->InitState(nullptr, &features2, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
         return true;
@@ -643,6 +644,33 @@ TEST_F(VkLayerTest, ViewportInheritance) {
         if (should_fail) m_errorMonitor->VerifyFound();
         else m_errorMonitor->VerifyNotFound();
     }
+}
+
+TEST_F(VkLayerTest, ViewportInheritanceMissingFeature) {
+    TEST_DESCRIPTION("Error using VK_NV_inherited_viewport_scissor without enabling feature.");
+    ASSERT_NO_FATAL_FAILURE(InitFramework(m_errorMonitor));
+    bool has_features;
+    const char* missing_feature_string;
+    ASSERT_NO_FATAL_FAILURE(has_features = ViewportInheritanceTestData::InitState(this, &missing_feature_string, false));
+    if (!has_features) {
+        printf("%s\n", missing_feature_string);
+        return;
+    }
+
+    ViewportInheritanceTestData test_data(m_device, gpu());
+    if (test_data.FailureReason()) {
+        printf("%s Test internal failure: %s\n", kSkipPrefix, test_data.FailureReason());
+        return;
+    }
+    VkCommandPool pool = m_commandPool->handle();
+
+    m_errorMonitor->ExpectSuccess();
+    test_data.MakeBeginSubpassCommandBuffer(pool, 0, nullptr);
+    m_errorMonitor->VerifyNotFound();
+
+    m_errorMonitor->SetDesiredFailureMsg(kErrorBit, "VUID-VkCommandBufferInheritanceViewportScissorInfoNV-viewportScissor2D-04782");
+    test_data.MakeBeginSubpassCommandBuffer(pool, 1, test_data.kViewportArray);
+    m_errorMonitor->VerifyFound();
 }
 
 
