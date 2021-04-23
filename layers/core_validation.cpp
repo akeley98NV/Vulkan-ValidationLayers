@@ -6107,7 +6107,7 @@ bool CoreChecks::ValidateGraphicsPipelineBindPoint(const CMD_BUFFER_STATE *cb_st
                          || IsDynamic(pipeline_state, VK_DYNAMIC_STATE_SCISSOR);
         if (!dyn_viewport || !dyn_scissor) {
             skip |= LogError(device, "VUID-vkCmdBindPipeline-commandBuffer-04808",
-                "Graphics pipeline incompatible with viewport/scissor inheritance");
+                "Graphics pipeline incompatible with viewport/scissor inheritance.");
         }
     }
 
@@ -11547,7 +11547,7 @@ class CoreChecks::ViewportScissorInheritanceTracker {
                 ss << "was left undefined after vkCmdExecuteCommands or vkCmdBindPipeline (with non-dynamic state) in "
                       "the calling primary command buffer.";
             } else {
-                ss << "was left undefined after vkCmdBindPipeline (with non-dynamic state) in pCommandBuffers[" << cmd_buffer_idx
+                ss << "was left undefined after vkCmdBindPipeline (with non-dynamic state) in pCommandBuffers[" << trashed_by
                    << "].";
             }
             return validation->LogError(cb_state->commandBuffer, "VUID-vkCmdDraw-commandBuffer-02701", ss.str().c_str());

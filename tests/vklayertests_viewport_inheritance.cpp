@@ -386,8 +386,8 @@ class ViewportInheritanceTestData {
     }
 };
 
-TEST_F(VkLayerTest, ViewportInheritancePositive) {
-    TEST_DESCRIPTION("Error-free usage of VK_NV_inherited_viewport_scissor");
+TEST_F(VkLayerTest, ViewportInheritance) {
+    TEST_DESCRIPTION("Simple correct and incorrect usage of VK_NV_inherited_viewport_scissor");
     ASSERT_NO_FATAL_FAILURE(InitFramework(m_errorMonitor));
     bool has_features;
     const char* missing_feature_string;
@@ -410,6 +410,7 @@ TEST_F(VkLayerTest, ViewportInheritancePositive) {
     vk::CmdDraw(subpass_cmd, 3, 1, 0, 0);
     vk::EndCommandBuffer(subpass_cmd);
 
+    // Basic correct usage, provide viewport in primary that has the correct depth.
     VkCommandBuffer primary_cmd = test_data.MakeBeginPrimaryCommandBuffer(pool);
     vk::CmdSetViewport(primary_cmd, 0, 1, test_data.kViewportArray);
     vk::CmdSetScissor(primary_cmd, 0, 1, test_data.kScissorArray);
@@ -417,8 +418,151 @@ TEST_F(VkLayerTest, ViewportInheritancePositive) {
     vk::CmdExecuteCommands(primary_cmd, 1, &subpass_cmd);
     vk::CmdEndRenderPass(primary_cmd);
     vk::EndCommandBuffer(primary_cmd);
-
     m_errorMonitor->VerifyNotFound();
+
+    // Viewport with incorrect depth range.
+    m_errorMonitor->SetDesiredFailureMsg(kErrorBit, "VUID-vkCmdDraw-commandBuffer-02701");
+    test_data.BeginPrimaryCommandBuffer(primary_cmd);
+    vk::CmdSetViewport(primary_cmd, 0, 1, test_data.kViewportAlternateDepthArray);
+    vk::CmdSetScissor(primary_cmd, 0, 1, test_data.kScissorArray);
+    test_data.BeginRenderPass(primary_cmd);
+    vk::CmdExecuteCommands(primary_cmd, 1, &subpass_cmd);
+    vk::CmdEndRenderPass(primary_cmd);
+    vk::EndCommandBuffer(primary_cmd);
+    m_errorMonitor->VerifyFound();
+
+    // Viewport not provided.
+    m_errorMonitor->SetDesiredFailureMsg(kErrorBit, "VUID-vkCmdDraw-commandBuffer-02701");
+    test_data.BeginPrimaryCommandBuffer(primary_cmd);
+    vk::CmdSetScissor(primary_cmd, 0, 1, test_data.kScissorArray);
+    test_data.BeginRenderPass(primary_cmd);
+    vk::CmdExecuteCommands(primary_cmd, 1, &subpass_cmd);
+    vk::CmdEndRenderPass(primary_cmd);
+    vk::EndCommandBuffer(primary_cmd);
+    m_errorMonitor->VerifyFound();
+
+    // Scissor not provided.
+    m_errorMonitor->SetDesiredFailureMsg(kErrorBit, "VUID-vkCmdDraw-commandBuffer-02701");
+    test_data.BeginPrimaryCommandBuffer(primary_cmd);
+    vk::CmdSetViewport(primary_cmd, 0, 1, test_data.kViewportArray);
+    test_data.BeginRenderPass(primary_cmd);
+    vk::CmdExecuteCommands(primary_cmd, 1, &subpass_cmd);
+    vk::CmdEndRenderPass(primary_cmd);
+    vk::EndCommandBuffer(primary_cmd);
+    m_errorMonitor->VerifyFound();
+
+    // again (i.e. no stale state left over when resetting a secondary command buffer).
+    // Don't swap the loop order or you'll mess up subpass_cmd for upcoming tests.
+    for (int should_fail = 1; should_fail >= 0; --should_fail) {
+        if (should_fail) {
+            m_errorMonitor->SetDesiredFailureMsg(kErrorBit, "VUID-vkCmdDraw-commandBuffer-02701"); // viewport
+            m_errorMonitor->SetDesiredFailureMsg(kErrorBit, "VUID-vkCmdDraw-commandBuffer-02701"); // scissor
+            test_data.BeginSubpassCommandBuffer(subpass_cmd, 0, nullptr);
+        }
+        else {
+            m_errorMonitor->ExpectSuccess();
+            test_data.BeginSubpassCommandBuffer(subpass_cmd, 1, test_data.kViewportDepthOnlyArray);
+        }
+        test_data.BindGraphicsPipeline(subpass_cmd, true, 1);
+        vk::CmdDraw(subpass_cmd, 3, 1, 0, 0);
+        vk::EndCommandBuffer(subpass_cmd);
+
+        test_data.BeginPrimaryCommandBuffer(primary_cmd);
+        vk::CmdSetViewport(primary_cmd, 0, 1, test_data.kViewportArray);
+        vk::CmdSetScissor(primary_cmd, 0, 1, test_data.kScissorArray);
+        test_data.BeginRenderPass(primary_cmd);
+        vk::CmdExecuteCommands(primary_cmd, 1, &subpass_cmd);
+        vk::CmdEndRenderPass(primary_cmd);
+        vk::EndCommandBuffer(primary_cmd);
+
+        if (should_fail) m_errorMonitor->VerifyFound();
+        else m_errorMonitor->VerifyNotFound();
+    }
+
+    // Secondary that binds a static viewport/scissor pipeline.
+    VkCommandBuffer static_state_cmd = test_data.MakeBeginSubpassCommandBuffer(pool, 0, nullptr);
+    test_data.BindGraphicsPipeline(static_state_cmd, false, 1);
+    vk::EndCommandBuffer(static_state_cmd);
+
+    // Test that the validation layers still flag missing state when inheritance is disabled, then stops flagging it when enabled
+    // Test that inheritance fails if a static viewport/scissor pipeline
+    // trashes the state before it is inherited (but it's okay if it's
+    // trashed afterwards).
+    for (int should_fail = 0; should_fail < 2; ++should_fail) {
+        if (should_fail) {
+            m_errorMonitor->SetDesiredFailureMsg(kErrorBit, "VUID-vkCmdDraw-commandBuffer-02701"); // viewport
+            m_errorMonitor->SetDesiredFailureMsg(kErrorBit, "VUID-vkCmdDraw-commandBuffer-02701"); // scissor
+        }
+        else {
+            m_errorMonitor->ExpectSuccess();
+        }
+        std::array<VkCommandBuffer, 2> secondaries = {should_fail ? static_state_cmd : subpass_cmd,
+                                                      should_fail ? subpass_cmd : static_state_cmd};
+
+        test_data.BeginPrimaryCommandBuffer(primary_cmd);
+        vk::CmdSetViewport(primary_cmd, 0, 1, test_data.kViewportArray);
+        vk::CmdSetScissor(primary_cmd, 0, 1, test_data.kScissorArray);
+        test_data.BeginRenderPass(primary_cmd);
+        vk::CmdExecuteCommands(primary_cmd, secondaries.size(), secondaries.data());
+        vk::CmdEndRenderPass(primary_cmd);
+        vk::EndCommandBuffer(primary_cmd);
+
+        if (should_fail) m_errorMonitor->VerifyFound();
+        else m_errorMonitor->VerifyNotFound();
+    }
+
+    // Check that the validation layers don't count the primary
+    // command buffer state when overwritten by static
+    // viewport/scissor pipeline.
+    for (int should_fail = 0; should_fail < 2; ++should_fail) {
+        if (should_fail) {
+            m_errorMonitor->SetDesiredFailureMsg(kErrorBit, "VUID-vkCmdDraw-commandBuffer-02701"); // viewport
+            m_errorMonitor->SetDesiredFailureMsg(kErrorBit, "VUID-vkCmdDraw-commandBuffer-02701"); // scissor
+        }
+        else {
+            m_errorMonitor->ExpectSuccess();
+        }
+
+        test_data.BeginPrimaryCommandBuffer(primary_cmd);
+        vk::CmdSetViewport(primary_cmd, 0, 1, test_data.kViewportArray);
+        vk::CmdSetScissor(primary_cmd, 0, 1, test_data.kScissorArray);
+        if (should_fail) test_data.BindGraphicsPipeline(primary_cmd, false, 1);
+        test_data.BeginRenderPass(primary_cmd);
+        vk::CmdExecuteCommands(primary_cmd, 1, &subpass_cmd);
+        vk::CmdEndRenderPass(primary_cmd);
+        vk::EndCommandBuffer(primary_cmd);
+
+        if (should_fail) m_errorMonitor->VerifyFound();
+        else m_errorMonitor->VerifyNotFound();
+    }
+
+    // Check that the validation layers DON'T report mismatched viewport depth when the secondary command buffer does not actually
+    // consume the viewport in drawing commands (weird corner case).
+    VkCommandBuffer no_draw_cmd = test_data.MakeBeginSubpassCommandBuffer(pool, 1, test_data.kViewportDepthOnlyArray);
+    test_data.BindGraphicsPipeline(no_draw_cmd, true, 1); // but no subsequent draw call.
+    vk::EndCommandBuffer(no_draw_cmd);
+
+    for (int should_fail = 0; should_fail < 2; ++should_fail) {
+        if (should_fail) {
+            m_errorMonitor->SetDesiredFailureMsg(kErrorBit, "VUID-vkCmdDraw-commandBuffer-02701"); // viewport
+        }
+        else {
+            m_errorMonitor->ExpectSuccess();
+        }
+
+        test_data.BeginPrimaryCommandBuffer(primary_cmd);
+        vk::CmdSetViewport(primary_cmd, 0, 1, test_data.kViewportAlternateDepthArray);
+        vk::CmdSetScissor(primary_cmd, 0, 1, test_data.kScissorArray);
+        test_data.BeginRenderPass(primary_cmd);
+        vk::CmdExecuteCommands(primary_cmd, 1, should_fail ? &subpass_cmd : &no_draw_cmd);
+        vk::CmdEndRenderPass(primary_cmd);
+        vk::EndCommandBuffer(primary_cmd);
+
+        if (should_fail) m_errorMonitor->VerifyFound();
+        else m_errorMonitor->VerifyNotFound();
+    }
+
+    // Check that the validation layers are not okay with binding static viewport/scissor pipelines when inheritance enabled.
 }
 
 
@@ -543,7 +687,7 @@ const VkViewport ViewportInheritanceTestData::kViewportDepthOnlyArray[32] = {
 
 
 const VkViewport ViewportInheritanceTestData::kViewportAlternateDepthArray[32] = {
-    {0, 0, 128, 128, 0.00, 1.00}, {0, 0, 128, 128, 0.01, 0.00}, {0, 0, 128, 128, 0.00, 0.98}, {0, 0, 128, 128, 0.03, 0.00},
+    {0, 0, 128, 128, 0.88, 1.00}, {0, 0, 128, 128, 0.01, 0.00}, {0, 0, 128, 128, 0.00, 0.98}, {0, 0, 128, 128, 0.03, 0.00},
     {0, 0, 128, 128, 0.00, 0.96}, {0, 0, 128, 128, 0.05, 0.00}, {0, 0, 128, 128, 0.00, 0.94}, {0, 0, 128, 128, 0.07, 0.00},
     {0, 0, 128, 128, 0.00, 0.92}, {0, 0, 128, 128, 0.09, 0.00}, {0, 0, 128, 128, 0.00, 0.90}, {0, 0, 128, 128, 0.11, 0.00},
     {0, 0, 128, 128, 0.00, 0.88}, {0, 0, 128, 128, 0.13, 0.00}, {0, 0, 128, 128, 0.00, 0.86}, {0, 0, 128, 128, 0.15, 0.00},
