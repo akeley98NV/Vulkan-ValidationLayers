@@ -198,7 +198,7 @@ class ViewportInheritanceTestData {
     // Return whether the needed features were found or not.
     template <typename AddDeviceExtension>
     static bool InitState(VkRenderFramework* p_framework, AddDeviceExtension add_device_extension, const char** pp_reason,
-                          bool inheritedViewportScissor2D = true) {
+                          bool inheritedViewportScissor2D, bool extended_dynamic_state_multi_viewport) {
         VkPhysicalDeviceExtendedDynamicStateFeaturesEXT ext = {
             VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT, nullptr};
         VkPhysicalDeviceInheritedViewportScissorFeaturesNV nv = {
@@ -206,28 +206,35 @@ class ViewportInheritanceTestData {
         VkPhysicalDeviceFeatures2 features2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &nv};
         VkPhysicalDevice gpu = p_framework->gpu();
 
-        if (!p_framework->DeviceExtensionSupported(VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME)) {
-            *pp_reason = "missing " VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME;
-            return false;
+        // Enable extended dynamic state if requested.
+        if (extended_dynamic_state_multi_viewport) {
+          if (!p_framework->DeviceExtensionSupported(VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME)) {
+              *pp_reason = "missing " VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME;
+              return false;
+          }
+          add_device_extension(VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME);
+          if (!p_framework->DeviceExtensionSupported(VK_NV_INHERITED_VIEWPORT_SCISSOR_EXTENSION_NAME)) {
+              *pp_reason = "missing " VK_NV_INHERITED_VIEWPORT_SCISSOR_EXTENSION_NAME;
+              return false;
+          }
         }
-        add_device_extension(VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME);
-        if (!p_framework->DeviceExtensionSupported(VK_NV_INHERITED_VIEWPORT_SCISSOR_EXTENSION_NAME)) {
-            *pp_reason = "missing " VK_NV_INHERITED_VIEWPORT_SCISSOR_EXTENSION_NAME;
-            return false;
-        }
+
+        // Always enable the tested extension (but maybe won't actually enable relevant feature.)
         add_device_extension(VK_NV_INHERITED_VIEWPORT_SCISSOR_EXTENSION_NAME);
         vk::GetPhysicalDeviceFeatures2(gpu, &features2);
 
-        if (!features2.features.multiViewport) {
-            *pp_reason = "missing multiViewport feature";
-            return false;
+        if (extended_dynamic_state_multi_viewport) {
+          if (!features2.features.multiViewport) {
+              *pp_reason = "missing multiViewport feature";
+              return false;
+          }
+          if (!ext.extendedDynamicState) {
+              *pp_reason = "missing extendedDynamicState feature";
+              return false;
+          }
         }
-        if (!nv.inheritedViewportScissor2D) {
+        if (!nv.inheritedViewportScissor2D && !inheritedViewportScissor2D) {
             *pp_reason = "missing inheritedViewportScissor2D feature";
-            return false;
-        }
-        if (!ext.extendedDynamicState) {
-            *pp_reason = "missing extendedDynamicState feature";
             return false;
         }
         nv.inheritedViewportScissor2D = inheritedViewportScissor2D;
@@ -401,9 +408,9 @@ TEST_F(VkLayerTest, ViewportInheritance) {
     bool has_features;
     const char* missing_feature_string;
     auto self = this;
-    ASSERT_NO_FATAL_FAILURE(
-        has_features = ViewportInheritanceTestData::InitState(
-            this, [self](const char* extension) { self->m_device_extension_names.push_back(extension); }, &missing_feature_string));
+    ASSERT_NO_FATAL_FAILURE(has_features = ViewportInheritanceTestData::InitState(
+                                this, [self](const char* extension) { self->m_device_extension_names.push_back(extension); },
+                                &missing_feature_string, true, false));
     if (!has_features) {
         printf("%s\n", missing_feature_string);
         return;
@@ -664,7 +671,7 @@ TEST_F(VkLayerTest, ViewportInheritanceMissingFeature) {
     auto self = this;
     ASSERT_NO_FATAL_FAILURE(has_features = ViewportInheritanceTestData::InitState(
                                 this, [self](const char* extension) { self->m_device_extension_names.push_back(extension); },
-                                &missing_feature_string, false));
+                                &missing_feature_string, false, false));
     if (!has_features) {
         printf("%s\n", missing_feature_string);
         return;
@@ -693,9 +700,9 @@ TEST_F(VkLayerTest, ViewportInheritanceMultiViewport) {
     bool has_features;
     const char* missing_feature_string;
     auto self = this;
-    ASSERT_NO_FATAL_FAILURE(
-        has_features = ViewportInheritanceTestData::InitState(
-            this, [self](const char* extension) { self->m_device_extension_names.push_back(extension); }, &missing_feature_string));
+    ASSERT_NO_FATAL_FAILURE(has_features = ViewportInheritanceTestData::InitState(
+                                this, [self](const char* extension) { self->m_device_extension_names.push_back(extension); },
+                                &missing_feature_string, true, true));
     if (!has_features) {
         printf("%s\n", missing_feature_string);
         return;
