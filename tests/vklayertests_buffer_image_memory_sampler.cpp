@@ -6505,6 +6505,10 @@ TEST_F(VkLayerTest, InvalidBarrierQueueFamily) {
         excl_test.Init(nullptr);
 
         // core_validation::barrier_queue_families::kSubmitQueueMustMatchSrcOrDst
+
+        // akeley98: this test is wrong and should pass validation. Two queue families aren't enough to test this; you need three:
+        // one for the queue to submit to, and two distinct different families for the barrier. Because the barrier families are
+        // equal here, no ownership transfer actually happens, and this barrier is valid by the spec.
         excl_test("UNASSIGNED-CoreValidation-VkImageMemoryBarrier-sharing-mode-exclusive-same-family",
                   "UNASSIGNED-CoreValidation-VkBufferMemoryBarrier-sharing-mode-exclusive-same-family", other_family, other_family,
                   false, submit_family);
